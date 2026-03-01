@@ -1,21 +1,43 @@
 import os
+import re
 import threading
 import telebot
 from flask import Flask
 
-# --- FLASK SETUP (To keep Render's Web Service happy) ---
+# --- SHARED DATA STORAGE ---
+# This list will hold all the scraped links.
+# (Note: On the free Render tier, this will reset if the server restarts. 
+# We can add a database later if you need permanent storage).
+saved_media = []
+
+# --- FLASK SETUP (The Website) ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running perfectly!"
+    html = "<h1>🎬 My Media Server Archive</h1>"
+    
+    if not saved_media:
+        html += "<p>No media saved yet. Forward a message to the bot!</p>"
+    else:
+        html += "<ul>"
+        # Loop through our saved data and build the HTML
+        for item in reversed(saved_media): # Show newest first
+            html += f"<li>"
+            html += f"<h3>{item['name']}</h3>"
+            html += f"<p>Size: {item['size']}</p>"
+            html += f"<p><a href='{item['download']}' target='_blank'>📥 Download File</a> | "
+            html += f"<a href='{item['watch']}' target='_blank'>🍿 Watch Online</a></p>"
+            html += f"</li><hr>"
+        html += "</ul>"
+        
+    return html
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 # --- TELEGRAM BOT SETUP ---
-# It will pull your token securely from Render's Environment Variables
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -23,47 +45,42 @@ bot = telebot.TeleBot(BOT_TOKEN)
 def handle_message(message):
     text = message.text
     
-    # Check if the message contains the specific format
-    if "File Name :" in text:
+    # Check if this is the correct message format
+    if "File Name :" in text and "Download :" in text:
         try:
-            # Extract the filename (grabs everything after "File Name : " on that line)
-            lines = text.split('\n')
-            file_name = "Unknown"
-            file_size = "Unknown" # You can add extraction logic for size later if it's in the text
+            # Use Regex to cleanly extract exactly what we need
+            name_match = re.search(r'File Name :\s*(.+)', text)
+            size_match = re.search(r'File Size :\s*(.+)', text)
+            dl_match = re.search(r'Download :\s*(https?://\S+)', text)
+            watch_match = re.search(r'Watch Online :\s*(https?://\S+)', text)
             
-            for line in lines:
-                if "File Name :" in line:
-                    file_name = line.split("File Name :")[1].strip()
-                # If your pasted text includes "Size : 500MB", you'd extract it here
-                elif "Size :" in line:
-                    file_size = line.split("Size :")[1].strip()
-            
-            # Generate your links (you can customize these base URLs later)
-            base_url = "https://your-site.com"
-            download_link = f"{base_url}/download/{file_name.replace(' ', '_')}"
-            watch_link = f"{base_url}/watch/{file_name.replace(' ', '_')}"
-            
-            # Build the clean reply message
-            reply = (
-                f"🎬 **Extracted Data**\n\n"
-                f"**Name:** `{file_name}`\n"
-                f"**Size:** `{file_size}`\n\n"
-                f"📥 **Download:** [Click Here]({download_link})\n"
-                f"🍿 **Watch:** [Stream Here]({watch_link})"
-            )
-            
-            bot.reply_to(message, reply, parse_mode="Markdown", disable_web_page_preview=True)
-            
+            if name_match and dl_match and watch_match:
+                # Store the extracted data in a dictionary
+                media_data = {
+                    "name": name_match.group(1).strip(),
+                    "size": size_match.group(1).strip() if size_match else "Unknown",
+                    "download": dl_match.group(1).strip(),
+                    "watch": watch_match.group(1).strip()
+                }
+                
+                # Add it to our global list so the website can see it
+                saved_media.append(media_data)
+                
+                # Let you know it worked
+                bot.reply_to(message, f"✅ Saved to website!\n**{media_data['name']}**", parse_mode="Markdown")
+            else:
+                bot.reply_to(message, "❌ Could not extract the links. Make sure the format is exact.")
+                
         except Exception as e:
-            bot.reply_to(message, f"Oops, error parsing that: {e}")
+            bot.reply_to(message, f"❌ Error extracting data: {e}")
     else:
-        bot.reply_to(message, "Send me a message containing 'File Name : ...'")
+        bot.reply_to(message, "Send or forward a message containing 'File Name :' and 'Download :'")
 
 if __name__ == "__main__":
-    # 1. Start Flask in a background thread
+    # Start Flask
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
     
-    # 2. Start the Telegram Bot on the main thread
+    # Start Bot
     print("🤖 Bot is waking up...")
     bot.polling(none_stop=True)
