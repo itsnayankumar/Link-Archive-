@@ -1,21 +1,29 @@
 import os
-import subprocess
-import questionary
+from flask import Flask
 
-def main():
-    # Looking for media files in the container
-    valid_exts = ('.mkv', '.mp4')
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    # Look for media files
+    valid_exts = ('.mkv', '.mp4', '.avi', '.webm')
     files = [f for f in os.listdir('.') if f.lower().endswith(valid_exts)]
     
-    if not files:
-        print("No media files found!")
-        return
-
-    selected = questionary.select("Select file:", choices=files).ask()
+    # Build a simple HTML webpage
+    html = "<h1>🎬 My Media Server</h1>"
     
-    if selected:
-        print(f"Playing {selected}...")
-        subprocess.run(['mpv', selected])
+    if not files:
+        html += "<p>No media files found in the directory right now.</p>"
+    else:
+        html += "<ul>"
+        for f in files:
+            html += f"<li>{f}</li>"
+        html += "</ul>"
+        
+    return html
 
 if __name__ == "__main__":
-    main()
+    # Render requires web services to bind to host 0.0.0.0
+    # and usually uses a dynamic PORT environment variable.
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
